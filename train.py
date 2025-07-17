@@ -4,14 +4,17 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from torchvision import transforms
+import matplotlib.pyplot as plt
 
-from models.model import ResNet18Classifier
+from models.model import ResNet18Classifier, VGG16Classifier, EfficientNetB0Classifier
 from utils.datasets import CustomImageDataset
 
 
 def train_model(model, train_loader, val_loader, device, start_epoch, epochs, optimizer, criterion, best_acc):
+    train_losses, val_accs = [], []
     for epoch in range(start_epoch, epochs + 1):
         model.train()
+
         total_loss = 0
         for imgs, labels in train_loader:
             imgs, labels = imgs.to(device), labels.to(device)
@@ -22,9 +25,9 @@ def train_model(model, train_loader, val_loader, device, start_epoch, epochs, op
             optimizer.step()
             total_loss += loss.item()
         avg_loss = total_loss / len(train_loader)
+        train_losses.append(avg_loss)
         print(f"Epoch {epoch}/{epochs}, Train Loss: {avg_loss:.4f}")
 
-        # Валидация
         model.eval()
         correct = total = 0
         with torch.no_grad():
@@ -34,9 +37,9 @@ def train_model(model, train_loader, val_loader, device, start_epoch, epochs, op
                 correct += (preds == labels).sum().item()
                 total += labels.size(0)
         val_acc = 100 * correct / total
+        val_accs.append(val_acc)
         print(f" Validation Acc: {val_acc:.2f}%")
 
-        # Сохраняем лучший чекпойнт
         if val_acc > best_acc:
             best_acc = val_acc
             torch.save({
@@ -46,18 +49,29 @@ def train_model(model, train_loader, val_loader, device, start_epoch, epochs, op
                 'best_acc': best_acc
             }, 'best_checkpoint.pth')
             print(f"New best model saved with acc: {best_acc:.2f}%")
-    print("Training complete. Best Acc: {:.2f}%".format(best_acc))
+    epochs_range = list(range(start_epoch, epochs + 1))
+    plt.figure()
+    plt.plot(epochs_range, train_losses, label='Train Loss')
+    plt.plot(epochs_range, val_accs, label='Val Accuracy')
+    plt.xlabel('Epoch')
+    plt.ylabel('Value')
+    plt.legend()
+    plt.savefig('training_history1.png')
+    print('Saved training_history1.png')
+    print(f"Training complete. Best Acc: {best_acc:.2f}%")
 
 def main():
     data_dir = "data"
     batch_size = 32
-    epochs = 30
+    epochs = 20
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     train_transform = transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.RandomHorizontalFlip(),
-        transforms.RandomRotation(15),
+        transforms.RandomRotation(25),
+        transforms.RandomResizedCrop(224, scale=(0.8, 1.0)),
+        transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.2),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
@@ -74,12 +88,11 @@ def main():
 
     model = ResNet18Classifier(num_classes=len(train_dataset.classes), use_pretrained=True).to(device)
 
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
     optimizer = optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-5)
     start_epoch = 1
     best_acc = 0.0
 
-    # Загрузка чекпойнта, если есть
     if os.path.exists('best_checkpoint.pth'):
         print("Loading checkpoint...")
         checkpoint = torch.load('best_checkpoint.pth', map_location=device)
